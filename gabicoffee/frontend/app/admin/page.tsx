@@ -135,6 +135,7 @@ export default function AdminPage() {
   const [newItem, setNewItem] = useState(emptyItem())
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null)
   const [menuMsg, setMenuMsg] = useState('')
+  const [aiResult, setAiResult] = useState<MenuItem | null>(null)
 
   // Quick-add state
   const [quickName, setQuickName] = useState('')
