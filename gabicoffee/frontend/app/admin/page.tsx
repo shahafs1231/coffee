@@ -2,8 +2,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
-const API = 'http://localhost:8001'
-const CATEGORIES = ['קפה', 'ליד הקפה', 'מכונות קפה וציוד נלווה']
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+const CATEGORIES = ['פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות']
 
 interface MenuItem {
   id: number
@@ -12,6 +12,7 @@ interface MenuItem {
   price: number
   category: string
   popular: boolean
+  image?: string | null
 }
 
 interface Settings {
@@ -69,7 +70,7 @@ interface Order {
 }
 
 const emptyItem = (): Omit<MenuItem, 'id'> => ({
-  name: '', description: '', price: 0, category: 'קפה', popular: false,
+  name: '', description: '', price: 0, category: 'פולי קפה', popular: false, image: null,
 })
 
 // ─── Login screen ────────────────────────────────────────────────────────────
@@ -135,6 +136,13 @@ export default function AdminPage() {
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null)
   const [menuMsg, setMenuMsg] = useState('')
 
+  // Quick-add state
+  const [quickName, setQuickName] = useState('')
+  const [quickCategory, setQuickCategory] = useState('פולי קפה')
+  const [quickPrice, setQuickPrice] = useState('')
+  const [quickLoading, setQuickLoading] = useState(false)
+  const [quickResult, setQuickResult] = useState<MenuItem | null>(null)
+
   // Settings state
   const [settings, setSettings] = useState<Settings | null>(null)
   const [settingsForm, setSettingsForm] = useState<Settings | null>(null)
@@ -160,7 +168,7 @@ export default function AdminPage() {
   const [messages, setMessages] = useState<ContactMessage[]>([])
   const [orders, setOrders] = useState<Order[]>([])
 
-  const headers = { 'Content-Type': 'application/json', 'x-admin-password': token || '' }
+  const headers = { 'Content-Type': 'application/json', 'x-admin-token': token || '' }
 
   // Fetch menu
   const fetchMenu = async () => {
@@ -208,13 +216,13 @@ export default function AdminPage() {
 
   // Fetch messages
   const fetchMessages = async (t: string) => {
-    const res = await fetch(`${API}/admin/messages`, { headers: { 'x-admin-password': t } })
+    const res = await fetch(`${API}/admin/messages`, { headers: { 'x-admin-token': t } })
     if (res.ok) setMessages(await res.json())
   }
 
   // Fetch orders
   const fetchOrders = async (t: string) => {
-    const res = await fetch(`${API}/admin/orders`, { headers: { 'x-admin-password': t } })
+    const res = await fetch(`${API}/admin/orders`, { headers: { 'x-admin-token': t } })
     if (res.ok) setOrders(await res.json())
   }
 
@@ -227,6 +235,21 @@ export default function AdminPage() {
   }, [token])
 
   if (!token) return <LoginScreen onLogin={setToken} />
+
+  // ── Image upload ───────────────────────────────────────────────────────────
+
+  const uploadImage = async (file: File): Promise<string> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${API}/admin/upload-image`, {
+      method: 'POST',
+      headers: { 'x-admin-token': token || '' },
+      body: form,
+    })
+    if (!res.ok) throw new Error('upload failed')
+    const data = await res.json()
+    return data.url
+  }
 
   // ── Menu handlers ──────────────────────────────────────────────────────────
 
@@ -329,9 +352,82 @@ export default function AdminPage() {
           <div>
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-coffee-900">מוצרים בתפריט</h2>
-              <button onClick={() => { setShowAddForm(true); setEditingItem(null) }} className="btn-primary text-sm py-2 px-5">
+              <button onClick={() => { setShowAddForm(true); setEditingItem(null); setAiResult(null) }} className="btn-primary text-sm py-2 px-5">
                 + הוסף מוצר
               </button>
+            </div>
+
+            {/* Quick-add */}
+            <div className="card p-5 mb-6 border-2 border-dashed border-coffee-300 bg-coffee-50/50">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-xl">⚡</span>
+                <h3 className="font-bold text-coffee-900">הוספה מהירה</h3>
+                <span className="text-xs text-coffee-400">— שם, קטגוריה ומחיר בלבד</span>
+              </div>
+              <div className="flex gap-3 flex-wrap">
+                <input
+                  value={quickName}
+                  onChange={e => setQuickName(e.target.value)}
+                  placeholder="שם המוצר..."
+                  className="input-admin flex-1 min-w-40"
+                />
+                <select
+                  value={quickCategory}
+                  onChange={e => setQuickCategory(e.target.value)}
+                  className="input-admin w-48"
+                >
+                  {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                </select>
+                <input
+                  type="number"
+                  value={quickPrice}
+                  onChange={e => setQuickPrice(e.target.value)}
+                  placeholder="מחיר ₪"
+                  className="input-admin w-28"
+                  min={0}
+                />
+                <button
+                  disabled={quickLoading || !quickName.trim() || !quickPrice}
+                  onClick={async () => {
+                    setQuickLoading(true); setQuickResult(null)
+                    const descMap: Record<string, string> = {
+                      'פולי קפה': `${quickName} — פולי קפה ספיישלטי באיכות גבוהה`,
+                      'מכונות קפה': `${quickName} — מכונת קפה איכותית לשימוש ביתי`,
+                      'אביזרים': `${quickName} — אביזר קפה איכותי לחוויה מושלמת`,
+                      'מתנות': `${quickName} — סט מתנה מושלם לאוהבי קפה`,
+                    }
+                    const newProduct = {
+                      name: quickName.trim(),
+                      description: descMap[quickCategory] || quickName.trim(),
+                      price: parseFloat(quickPrice),
+                      category: quickCategory,
+                      popular: false,
+                    }
+                    const res = await fetch(`${API}/admin/menu`, {
+                      method: 'POST', headers, body: JSON.stringify(newProduct),
+                    })
+                    if (res.ok) {
+                      const item = await res.json()
+                      setQuickResult(item)
+                      setQuickName(''); setQuickPrice('')
+                      fetchMenu()
+                      flash(setMenuMsg, `✅ "${item.name}" נוסף בהצלחה`)
+                    }
+                    setQuickLoading(false)
+                  }}
+                  className="btn-primary text-sm py-2 px-5 disabled:opacity-60 whitespace-nowrap"
+                >
+                  {quickLoading ? '...' : '+ הוסף'}
+                </button>
+              </div>
+              {quickResult && (
+                <div className="mt-3 bg-white rounded-xl p-3 text-sm border border-coffee-200">
+                  <span className="font-bold text-coffee-900">{quickResult.name}</span>
+                  <span className="text-coffee-500 mx-2">·</span>
+                  <span className="font-bold text-coffee-800">₪{quickResult.price}</span>
+                  <span className="text-coffee-400 text-xs mr-2">({quickResult.category})</span>
+                </div>
+              )}
             </div>
 
             {menuMsg && (
@@ -373,6 +469,36 @@ export default function AdminPage() {
                       onChange={e => setNewItem({ ...newItem, popular: e.target.checked })}
                       className="w-4 h-4 accent-coffee-700" />
                     <label htmlFor="pop-new" className="text-sm text-coffee-700">מוצר פופולרי</label>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="label-admin">תמונה</label>
+                    <input
+                      type="text"
+                      placeholder="הדבק כתובת URL של תמונה..."
+                      value={newItem.image || ''}
+                      onChange={e => setNewItem({ ...newItem, image: e.target.value || null })}
+                      className="input-admin mb-2"
+                    />
+                    <div className="text-xs text-coffee-400 mb-2 text-center">— או —</div>
+                    <input type="file" accept="image/*"
+                      onChange={async e => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        const url = await uploadImage(file)
+                        setNewItem({ ...newItem, image: url })
+                      }}
+                      className="input-admin" />
+                    {newItem.image && (
+                      <div className="relative mt-2 inline-block">
+                        <img src={newItem.image} alt="preview"
+                          className="h-28 w-full object-cover rounded-xl" />
+                        <button type="button"
+                          onClick={() => setNewItem({ ...newItem, image: null })}
+                          className="absolute top-1 left-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs flex items-center justify-center">
+                          ×
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="md:col-span-2 flex gap-3 mt-2">
                     <button type="submit" className="btn-primary text-sm py-2 px-5">שמור מוצר</button>
@@ -416,6 +542,36 @@ export default function AdminPage() {
                       onChange={e => setEditingItem({ ...editingItem, popular: e.target.checked })}
                       className="w-4 h-4 accent-coffee-700" />
                     <label htmlFor="pop-edit" className="text-sm text-coffee-700">מוצר פופולרי</label>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="label-admin">תמונה</label>
+                    <input
+                      type="text"
+                      placeholder="הדבק כתובת URL של תמונה..."
+                      value={editingItem.image || ''}
+                      onChange={e => setEditingItem({ ...editingItem, image: e.target.value || null })}
+                      className="input-admin mb-2"
+                    />
+                    <div className="text-xs text-coffee-400 mb-2 text-center">— או —</div>
+                    <input type="file" accept="image/*"
+                      onChange={async e => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        const url = await uploadImage(file)
+                        setEditingItem({ ...editingItem, image: url })
+                      }}
+                      className="input-admin" />
+                    {editingItem.image && (
+                      <div className="relative mt-2 inline-block">
+                        <img src={editingItem.image} alt="preview"
+                          className="h-28 w-48 object-cover rounded-xl" />
+                        <button type="button"
+                          onClick={() => setEditingItem({ ...editingItem, image: null })}
+                          className="absolute top-1 left-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs flex items-center justify-center">
+                          ×
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="md:col-span-2 flex gap-3 mt-2">
                     <button type="submit" className="btn-primary text-sm py-2 px-5">שמור שינויים</button>

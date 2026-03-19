@@ -4,6 +4,11 @@ import Navbar from '@/components/Navbar'
 import Footer from '@/components/Footer'
 import CartDrawer from '@/components/CartDrawer'
 import { CartProvider } from '@/context/CartContext'
+import { LanguageProvider } from '@/context/LanguageContext'
+import { TransitionProvider } from '@/context/TransitionContext'
+import HtmlDirSync from '@/components/HtmlDirSync'
+import VideoIntro from '@/components/VideoIntro'
+import PageTransitionOverlay from '@/components/PageTransitionOverlay'
 
 export const metadata: Metadata = {
   title: "גבריאלס' קפה",
@@ -21,12 +26,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="min-h-screen flex flex-col font-sans">
-        <CartProvider>
-          <Navbar />
-          <CartDrawer />
-          <main className="flex-grow">{children}</main>
-          <Footer />
-        </CartProvider>
+        <LanguageProvider>
+          <TransitionProvider>
+            <PageTransitionOverlay />
+            <HtmlDirSync />
+            <VideoIntro />
+            <CartProvider>
+              <Navbar />
+              <CartDrawer />
+              <main className="flex-grow">{children}</main>
+              <Footer />
+            </CartProvider>
+          </TransitionProvider>
+        </LanguageProvider>
       </body>
     </html>
   )

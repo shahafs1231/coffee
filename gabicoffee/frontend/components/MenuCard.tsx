@@ -1,6 +1,8 @@
 'use client'
 import { useState } from 'react'
 import { useCart } from '@/context/CartContext'
+import { useLang } from '@/context/LanguageContext'
+import { useT } from '@/lib/translations'
 
 interface MenuItem {
   id: number
@@ -9,11 +11,28 @@ interface MenuItem {
   price: number
   category: string
   popular: boolean
+  image?: string | null
+}
+
+const CATEGORY_ICONS: Record<string, string> = {
+  'פולי קפה': '☕',
+  'מכונות קפה': '⚙️',
+  'מתנות': '🎁',
+  'אביזרים': '🔧',
+}
+
+const CATEGORY_EN: Record<string, string> = {
+  'פולי קפה': 'Coffee Beans',
+  'מכונות קפה': 'Coffee Machines',
+  'מתנות': 'Gifts',
+  'אביזרים': 'Accessories',
 }
 
 export default function MenuCard({ item }: { item: MenuItem }) {
   const { addItem } = useCart()
   const [added, setAdded] = useState(false)
+  const { lang } = useLang()
+  const t = useT(lang)
 
   const handleAdd = () => {
     addItem({ id: item.id, name: item.name, price: item.price, category: item.category })
@@ -26,14 +45,19 @@ export default function MenuCard({ item }: { item: MenuItem }) {
       {/* Popular badge */}
       {item.popular && (
         <span className="absolute top-3 right-3 z-10 bg-coffee-600 text-cream text-xs font-bold px-2 py-1 rounded-full shadow">
-          ⭐ פופולרי
+          {t.card.popular}
         </span>
       )}
 
-      {/* Image placeholder */}
-      <div className="h-40 bg-gradient-to-br from-coffee-200 to-coffee-400 flex items-center justify-center text-6xl select-none">
-        {item.category === 'קפה' ? '☕' : item.category === 'ליד הקפה' ? '🥐' : '⚙️'}
-      </div>
+      {/* Image */}
+      {item.image ? (
+        <img src={item.image} alt={item.name}
+          className="h-40 w-full object-cover" />
+      ) : (
+        <div className="h-40 bg-gradient-to-br from-coffee-200 to-coffee-400 flex items-center justify-center text-6xl select-none">
+          {CATEGORY_ICONS[item.category] ?? '🔧'}
+        </div>
+      )}
 
       {/* Content */}
       <div className="p-4 flex flex-col flex-grow">
@@ -45,7 +69,7 @@ export default function MenuCard({ item }: { item: MenuItem }) {
         </div>
         <p className="text-sm text-coffee-700 leading-relaxed flex-grow">{item.description}</p>
         <span className="mt-3 inline-block text-xs bg-coffee-100 text-coffee-700 rounded-full px-3 py-1 self-start font-medium">
-          {item.category}
+          {lang === 'en' ? (CATEGORY_EN[item.category] ?? item.category) : item.category}
         </span>
 
         {/* Add to cart button */}
@@ -57,7 +81,7 @@ export default function MenuCard({ item }: { item: MenuItem }) {
               : 'bg-coffee-700 hover:bg-coffee-800 text-cream'
             }`}
         >
-          {added ? '✓ נוסף לסל!' : '🛒 הוסף לסל'}
+          {added ? t.card.added : t.card.addToCart}
         </button>
       </div>
     </div>

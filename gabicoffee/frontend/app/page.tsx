@@ -1,60 +1,46 @@
+'use client'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import MenuCard from '@/components/MenuCard'
-
-async function getPopularItems() {
-  try {
-    const res = await fetch('http://localhost:8001/menu/popular', { cache: 'no-store' })
-    if (!res.ok) return []
-    return res.json()
-  } catch { return [] }
-}
-
-async function getSettings() {
-  try {
-    const res = await fetch('http://localhost:8001/settings', { cache: 'no-store' })
-    if (!res.ok) return null
-    return res.json()
-  } catch { return null }
-}
-
-async function getHomeContent() {
-  try {
-    const res = await fetch('http://localhost:8001/home-content', { cache: 'no-store' })
-    if (!res.ok) return null
-    return res.json()
-  } catch { return null }
-}
+import { useLang } from '@/context/LanguageContext'
+import { useT } from '@/lib/translations'
 
 const DEFAULT_HOURS = [
-  { days: 'ראשון – חמישי', hours: '07:00 – 22:00' },
-  { days: 'שישי',          hours: '07:00 – 17:00' },
-  { days: 'שבת',           hours: '08:00 – 20:00' },
+  { days: 'ראשון, שלישי – חמישי', hours: '09:30–14:30 | 16:30–20:00' },
+  { days: 'שני',                   hours: 'סגור' },
+  { days: 'שישי',                  hours: '09:30–14:00' },
 ]
 
-const DEFAULT_HOME = {
-  hero_subtitle:    'כי כל כוס קפה טובה מספרת סיפור',
-  hero_description: 'קפה איכותי, מאפים טריים מהתנור ואווירה חמימה שתגרום לכם לחזור שוב ושוב. ברוכים הבאים למשפחה.',
-  hero_btn_primary:   'לצפייה במוצרים',
-  hero_btn_secondary: 'מצאו אותנו',
-  features: [
-    { icon: '🌱', title: 'פולים מובחרים', desc: 'אנחנו מייבאים פולי קפה ספיישלטי ממיטב המטעים בעולם' },
-    { icon: '👨‍🍳', title: 'מאפים טריים',  desc: 'כל הפסטריות נאפות אצלנו מדי בוקר עם חומרי גלם איכותיים' },
-    { icon: '🤝', title: 'אווירה חמימה', desc: 'מקום שבו כולם מרגישים בבית — עם חיוך ומוזיקה טובה' },
-  ],
-  cta_title: 'בואו לבקר אותנו',
-  cta_desc:  'רוטשילד 55, תל אביב. חנייה חינם בסביבה ועגלה ידידותית.',
+const DAYS_EN: Record<string, string> = {
+  'ראשון, שלישי – חמישי': 'Sun, Tue – Thu',
+  'שני': 'Monday',
+  'שישי': 'Friday',
+  'ראשון – חמישי': 'Sun – Thu',
 }
+function translateDay(d: string, lang: string) { return lang === 'en' ? (DAYS_EN[d] ?? d) : d }
+function translateHr(h: string, lang: string) { return lang === 'en' && h === 'סגור' ? 'Closed' : h }
 
-export default async function HomePage() {
-  const [popularItems, settings, homeContent] = await Promise.all([
-    getPopularItems(), getSettings(), getHomeContent(),
-  ])
-  const hours = settings?.hours ?? DEFAULT_HOURS
-  const h = { ...DEFAULT_HOME, ...homeContent }
+export default function HomePage() {
+  const { lang } = useLang()
+  const t = useT(lang)
+
+  const [popularItems, setPopularItems] = useState<any[]>([])
+  const [hours, setHours] = useState(DEFAULT_HOURS)
+
+  const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+
+  useEffect(() => {
+    fetch(`${API}/menu/popular`, { cache: 'no-store' })
+      .then(r => r.json()).then(setPopularItems).catch(() => {})
+    fetch(`${API}/settings`, { cache: 'no-store' })
+      .then(r => r.json()).then(d => { if (d?.hours) setHours(d.hours) }).catch(() => {})
+  }, [])
+
+  const h = t.home
 
   return (
     <>
-      {/* ── Hero — full-screen video background ──────────────────────── */}
+      {/* ── Hero ── */}
       <section className="relative min-h-[100vh] flex items-center justify-center text-center px-4 overflow-hidden">
         <video src="/reel.mp4" autoPlay muted loop playsInline
           className="absolute inset-0 w-full h-full object-cover" />
@@ -66,18 +52,18 @@ export default async function HomePage() {
             גבריאלס&apos; קפה
           </h1>
           <p className="text-xl md:text-2xl text-coffee-200 mb-2 font-light drop-shadow">
-            {h.hero_subtitle}
+            {h.subtitle}
           </p>
           <p className="text-base text-coffee-100 mb-10 max-w-xl mx-auto leading-relaxed drop-shadow">
-            {h.hero_description}
+            {h.description}
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link href="/menu" className="btn-primary text-lg px-8 py-4">
-              {h.hero_btn_primary}
+              {h.btnPrimary}
             </Link>
             <Link href="/contact"
               className="btn-outline border-white text-white hover:bg-white hover:text-coffee-950 text-lg px-8 py-4">
-              {h.hero_btn_secondary}
+              {h.btnSecondary}
             </Link>
           </div>
         </div>
@@ -89,11 +75,11 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* ── Features ────────────────────────────────────────────────── */}
+      {/* ── Features ── */}
       <section className="py-16 bg-cream">
         <div className="max-w-6xl mx-auto px-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
-            {h.features.map((f: { icon: string; title: string; desc: string }, i: number) => (
+            {h.features.map((f, i) => (
               <div key={i} className="p-6">
                 <div className="text-5xl mb-4">{f.icon}</div>
                 <h3 className="text-xl font-bold text-coffee-900 mb-2">{f.title}</h3>
@@ -104,13 +90,13 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* ── Popular items ───────────────────────────────────────────── */}
+      {/* ── Popular items ── */}
       {popularItems.length > 0 && (
         <section className="py-16 bg-coffee-50">
           <div className="max-w-6xl mx-auto px-4">
             <div className="text-center mb-10">
-              <h2 className="section-title">הנבחרים שלנו</h2>
-              <p className="text-coffee-600 text-lg">המוצרים הכי אהובים על הלקוחות שלנו</p>
+              <h2 className="section-title">{h.popularTitle}</h2>
+              <p className="text-coffee-600 text-lg">{h.popularSubtitle}</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {popularItems.slice(0, 6).map((item: any) => (
@@ -118,32 +104,32 @@ export default async function HomePage() {
               ))}
             </div>
             <div className="text-center mt-10">
-              <Link href="/menu" className="btn-primary text-base">לכל המוצרים</Link>
+              <Link href="/menu" className="btn-primary text-base">{h.allProducts}</Link>
             </div>
           </div>
         </section>
       )}
 
-      {/* ── Opening hours banner ────────────────────────────────────── */}
+      {/* ── Opening hours ── */}
       <section className="py-14" style={{ background: 'linear-gradient(90deg, #5c3317 0%, #884d18 100%)' }}>
         <div className="max-w-4xl mx-auto px-4 text-center">
-          <h2 className="text-3xl font-bold text-cream mb-6">שעות פעילות</h2>
+          <h2 className="text-3xl font-bold text-cream mb-6">{h.hoursTitle}</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-coffee-200">
-            {hours.map(({ days, hours: hr }: { days: string; hours: string }) => (
+            {hours.map(({ days, hours: hr }) => (
               <div key={days} className="bg-coffee-900 bg-opacity-40 rounded-2xl p-5">
-                <div className="font-semibold text-cream text-lg mb-1">{days}</div>
-                <div className="text-coffee-300 text-xl font-bold">{hr}</div>
+                <div className="font-semibold text-cream text-lg mb-1">{translateDay(days, lang)}</div>
+                <div className="text-coffee-300 text-xl font-bold">{translateHr(hr, lang)}</div>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ── CTA ─────────────────────────────────────────────────────── */}
+      {/* ── CTA ── */}
       <section className="py-20 bg-cream text-center px-4">
-        <h2 className="section-title">{h.cta_title}</h2>
-        <p className="text-coffee-600 text-lg mb-8 max-w-lg mx-auto">{h.cta_desc}</p>
-        <Link href="/contact" className="btn-primary text-lg px-10 py-4">צרו קשר</Link>
+        <h2 className="section-title">{h.ctaTitle}</h2>
+        <p className="text-coffee-600 text-lg mb-8 max-w-lg mx-auto">{h.ctaDesc}</p>
+        <Link href="/contact" className="btn-primary text-lg px-10 py-4">{h.ctaBtn}</Link>
       </section>
     </>
   )

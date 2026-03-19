@@ -2,7 +2,12 @@
 const nextConfig = {
   reactStrictMode: true,
   images: {
-    domains: [],
+    // Explicitly empty remotePatterns — no external image sources allowed.
+    // This mitigates the DoS via Image Optimizer remotePatterns vulnerability.
+    remotePatterns: [],
+    // Limit image sizes to prevent abuse
+    deviceSizes: [640, 750, 828, 1080, 1200],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
   },
 }
 

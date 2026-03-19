@@ -2,9 +2,9 @@
 import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
 
-const API = 'http://localhost:8001'
-const CATEGORIES = ['הכל', 'קפה', 'ליד הקפה', 'מכונות קפה וציוד נלווה']
-const CATEGORY_EMOJI: Record<string, string> = { קפה: '☕', 'ליד הקפה': '🥐', 'מכונות קפה וציוד נלווה': '⚙️', הכל: '🍽️' }
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+const CATEGORIES = ['הכל', 'פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות']
+const CATEGORY_EMOJI: Record<string, string> = { 'פולי קפה': '☕', 'מכונות קפה': '⚙️', 'אביזרים': '🔧', 'מתנות': '🎁', 'הכל': '🛍️' }
 
 interface MenuItem {
   id: number
@@ -16,7 +16,7 @@ interface MenuItem {
 }
 
 const blank = (): Omit<MenuItem, 'id'> => ({
-  name: '', description: '', price: 0, category: 'קפה', popular: false,
+  name: '', description: '', price: 0, category: 'פולי קפה', popular: false,
 })
 
 // ─── Login gate ───────────────────────────────────────────────────────────────
@@ -141,14 +141,19 @@ export default function ProductsPage() {
   // modal state: null = closed, 'add' = new item, number = edit item id
   const [modal, setModal] = useState<null | 'add' | number>(null)
 
-  const headers = { 'Content-Type': 'application/json', 'x-admin-password': token || '' }
+  const headers = { 'Content-Type': 'application/json', 'x-admin-token': token || '' }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const fetchItems = async () => {
     setLoading(true)
-    const r = await fetch(`${API}/menu`)
-    setItems(await r.json())
+    try {
+      const r = await fetch(`${API}/menu`)
+      if (!r.ok) throw new Error('network response was not ok')
+      setItems(await r.json())
+    } catch {
+      setItems([])
+    }
     setLoading(false)
   }
 

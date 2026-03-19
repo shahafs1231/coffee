@@ -36,6 +36,21 @@ a, button {
   border-radius: 4px;
 }
 
+/* Page transition — coffee steam animation */
+@keyframes coffeeRise {
+  0%   { opacity: 0;   transform: translateY(0)    scaleX(1);   }
+  40%  { opacity: 0.7; transform: translateY(-12px) scaleX(1.1); }
+  100% { opacity: 0;   transform: translateY(-28px) scaleX(0.7); }
+}
+
+.coffee-steam {
+  width: 5px;
+  height: 32px;
+  border-radius: 3px;
+  background: rgba(212, 160, 87, 0.6);
+  animation: coffeeRise 1.4s ease-in-out infinite;
+}
+
 @layer components {
   .btn-primary {
     @apply bg-coffee-700 text-cream px-6 py-3 rounded-full font-semibold

@@ -1,114 +1,160 @@
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import List, Optional
 from datetime import datetime
+import os, uuid, secrets, time
+from pathlib import Path
+from collections import defaultdict
+from dotenv import load_dotenv
+from supabase import create_client, Client
+
+load_dotenv()
 
 app = FastAPI(title="Gabriel's Coffee API")
 
+# ─── CORS ─────────────────────────────────────────────────────────────────────
+
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3002")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3002"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "x-admin-password", "x-admin-token"],
 )
+
+# ─── Security headers middleware ───────────────────────────────────────────────
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+# ─── Rate limiting ────────────────────────────────────────────────────────────
+
+_rate_store: dict[str, list] = defaultdict(list)
+
+def _check_rate_limit(key: str, max_requests: int = 10, window_seconds: int = 60):
+    now = time.time()
+    _rate_store[key] = [t for t in _rate_store[key] if now - t < window_seconds]
+    if len(_rate_store[key]) >= max_requests:
+        raise HTTPException(status_code=429, detail="יותר מדי בקשות, נסה שוב מאוחר יותר")
+    _rate_store[key].append(now)
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+
+UPLOADS_DIR = Path(__file__).parent.parent / "frontend" / "public" / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+
+# ─── Supabase ─────────────────────────────────────────────────────────────────
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 # ─── Admin auth ───────────────────────────────────────────────────────────────
 
-ADMIN_PASSWORD = "gabriel2024"
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+if not ADMIN_PASSWORD:
+    raise RuntimeError("ADMIN_PASSWORD environment variable must be set")
 
-def require_admin(x_admin_password: str = Header(...)):
-    if x_admin_password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="סיסמה שגויה")
+# In-memory session tokens: token -> expiry timestamp
+_sessions: dict[str, float] = {}
+SESSION_TTL = 8 * 60 * 60  # 8 hours
 
-# ─── Site settings (editable via admin) ───────────────────────────────────────
+def _create_session() -> str:
+    token = secrets.token_hex(32)
+    _sessions[token] = time.time() + SESSION_TTL
+    # Clean expired tokens
+    expired = [t for t, exp in _sessions.items() if time.time() > exp]
+    for t in expired:
+        del _sessions[t]
+    return token
 
-site_settings = {
-    "address": "רוטשילד 55, תל אביב",
-    "phone": "052-5961616",
-    "email": "hello@gabrielscoffee.co.il",
-    "hours": [
-        {"days": "ראשון – חמישי", "hours": "07:00 – 22:00"},
-        {"days": "שישי",          "hours": "07:00 – 17:00"},
-        {"days": "שבת",           "hours": "08:00 – 20:00"},
-    ],
-}
+def _valid_session(token: str) -> bool:
+    exp = _sessions.get(token)
+    return exp is not None and time.time() < exp
 
-# ─── Home page content ────────────────────────────────────────────────────────
-
-home_content = {
-    "hero_subtitle": "כי כל כוס קפה טובה מספרת סיפור",
-    "hero_description": "קפה איכותי, מאפים טריים מהתנור ואווירה חמימה שתגרום לכם לחזור שוב ושוב. ברוכים הבאים למשפחה.",
-    "hero_btn_primary": "לצפייה במוצרים",
-    "hero_btn_secondary": "מצאו אותנו",
-    "features": [
-        {"icon": "🌱", "title": "פולים מובחרים",  "desc": "אנחנו מייבאים פולי קפה ספיישלטי ממיטב המטעים בעולם"},
-        {"icon": "👨‍🍳", "title": "מאפים טריים",   "desc": "כל הפסטריות נאפות אצלנו מדי בוקר עם חומרי גלם איכותיים"},
-        {"icon": "🤝", "title": "אווירה חמימה",  "desc": "מקום שבו כולם מרגישים בבית — עם חיוך ומוזיקה טובה"},
-    ],
-    "cta_title": "בואו לבקר אותנו",
-    "cta_desc": "רוטשילד 55, תל אביב. חנייה חינם בסביבה ועגלה ידידותית.",
-}
-
-# ─── About page content ───────────────────────────────────────────────────────
-
-about_content = {
-    "story_title": "הסיפור שלנו",
-    "story_paragraphs": [
-        "גבריאלס' קפה נולד מתוך אהבה עמוקה לקפה. גבריאל, המייסד, התחיל את מסעו בבתי קפה קטנים ברחבי אירופה, שם גילה שקפה טוב הוא הרבה יותר ממשקה — הוא חוויה, תרבות, קהילה.",
-        "בשנת 2018 פתח גבריאל את בית הקפה הראשון שלו בלב תל אביב עם חלום פשוט: ליצור מקום שבו כולם מרגישים בבית ומקבלים כוס קפה מושלמת בכל ביקור.",
-        "היום, עם צוות של ברייסטות מיומנים ומאפים שנאפים מדי בוקר, אנחנו ממשיכים לשמור על אותה מסירות לאיכות ולאהבה לקהילה שלנו.",
-    ],
-    "values": [
-        {"icon": "🌱", "title": "קיימות",            "desc": "אנחנו עובדים עם מגדלי קפה שמשתמשים בשיטות גידול בנות קיימא ומשלמים מחיר הוגן."},
-        {"icon": "✨", "title": "איכות ללא פשרות",   "desc": "מהפול ועד לכוס — כל שלב בתהליך עובר בקרת איכות קפדנית."},
-        {"icon": "❤️", "title": "קהילה",             "desc": "אנחנו לא רק בית קפה, אנחנו מרחב קהילתי — מארחים אירועים, תערוכות וסדנאות."},
-    ],
-    "team": [
-        {"name": "גבריאל כהן", "role": "מייסד וברייסטה ראשי", "emoji": "👨‍🍳"},
-        {"name": "מיה לוי",    "role": "שפית הפסטריות",        "emoji": "👩‍🍳"},
-        {"name": "ניר שמואל", "role": "מנהל קפה",              "emoji": "☕"},
-    ],
-}
-
-# ─── Menu data ────────────────────────────────────────────────────────────────
-
-MENU_ITEMS: List[dict] = [
-    {"id": 1,  "name": "אספרסו",         "description": "שוט אספרסו כפול בעל גוף עשיר וארומה עמוקה",              "price": 12.0, "category": "קפה",    "popular": True  },
-    {"id": 2,  "name": "קפוצ'ינו",       "description": "אספרסו עם קצף חלב קטיפתי וניחוח שוקולד",                 "price": 18.0, "category": "קפה",    "popular": True  },
-    {"id": 3,  "name": "לאטה",           "description": "אספרסו עם הרבה חלב מוקצף וטעם עדין",                     "price": 19.0, "category": "קפה",    "popular": False },
-    {"id": 4,  "name": "אמריקנו",        "description": "אספרסו מדולל במים חמים לטעם עדין ומרענן",                "price": 14.0, "category": "קפה",    "popular": False },
-    {"id": 5,  "name": "מוקה",           "description": "אספרסו עם שוקולד, חלב מוקצף וקרם שנטי",                  "price": 22.0, "category": "קפה",    "popular": True  },
-    {"id": 6,  "name": "קפה קר",         "description": "קפה קר מוגש על קרח עם חלב שקדים",                        "price": 20.0, "category": "קפה",    "popular": True  },
-    {"id": 7,  "name": "קרואסון חמאה",   "description": "קרואסון טרי עם חמאה צרפתית, פריך ורך מבפנים",            "price": 16.0, "category": "ליד הקפה",  "popular": True  },
-    {"id": 8,  "name": "מאפה גבינה",     "description": "מאפה בצק עלים עם גבינה בולגרית ועשבי תיבול",             "price": 18.0, "category": "ליד הקפה",  "popular": False },
-    {"id": 9,  "name": "עוגת שוקולד",    "description": "עוגת שוקולד בלגי עשירה עם גנאש שוקולד מריר",             "price": 24.0, "category": "ליד הקפה",  "popular": True  },
-    {"id": 10, "name": "מאפה שמרים",     "description": "שמרים טריים עם קינמון, צימוקים וציפוי סוכר",              "price": 15.0, "category": "ליד הקפה",  "popular": False },
-    {"id": 11, "name": "סנדוויץ' גבריאל","description": "לחם מחמצת עם גבינת ברי, עגבניה מיובשת ובזיליקום",        "price": 38.0, "category": "מכונות קפה וציוד נלווה", "popular": True  },
-    {"id": 12, "name": "סלט ים תיכוני",  "description": "ירקות עונתיים, זיתים, גבינת פטה ורוטב לימון-שום",        "price": 42.0, "category": "מכונות קפה וציוד נלווה", "popular": False },
-    {"id": 13, "name": "ביצים ברנדיקט",  "description": "ביצים עלומות על אנגלישׁ מאפין עם רוטב הולנדז",            "price": 48.0, "category": "מכונות קפה וציוד נלווה", "popular": True  },
-]
-
-_next_id = 14
-orders_db: List[dict] = []
-contact_messages: List[dict] = []
+def require_admin(x_admin_token: str = Header(...)):
+    if not _valid_session(x_admin_token):
+        raise HTTPException(status_code=401, detail="לא מורשה — נא להתחבר מחדש")
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 
 class ContactMessage(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     message: str
+
+    @field_validator("name")
+    @classmethod
+    def name_length(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError("השם חייב להכיל בין 1 ל-100 תווים")
+        return v
+
+    @field_validator("message")
+    @classmethod
+    def message_length(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 2000:
+            raise ValueError("ההודעה חייבת להכיל בין 1 ל-2000 תווים")
+        return v
 
 class OrderItem(BaseModel):
     item_id: int
     quantity: int
 
+    @field_validator("quantity")
+    @classmethod
+    def quantity_range(cls, v: int) -> int:
+        if v < 1 or v > 50:
+            raise ValueError("כמות חייבת להיות בין 1 ל-50")
+        return v
+
 class Order(BaseModel):
     customer_name: str
     items: List[OrderItem]
     notes: Optional[str] = None
+
+    @field_validator("customer_name")
+    @classmethod
+    def name_length(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError("שם לקוח חייב להכיל בין 1 ל-100 תווים")
+        return v
+
+    @field_validator("items")
+    @classmethod
+    def items_not_empty(cls, v: list) -> list:
+        if not v or len(v) > 50:
+            raise ValueError("ההזמנה חייבת להכיל בין 1 ל-50 פריטים")
+        return v
+
+    @field_validator("notes")
+    @classmethod
+    def notes_length(cls, v: Optional[str]) -> Optional[str]:
+        if v and len(v) > 500:
+            raise ValueError("הערות לא יכולות לעלות על 500 תווים")
+        return v
 
 class MenuItemCreate(BaseModel):
     name: str
@@ -116,6 +162,37 @@ class MenuItemCreate(BaseModel):
     price: float
     category: str
     popular: bool = False
+    image: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def name_length(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError("שם חייב להכיל בין 1 ל-100 תווים")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def desc_length(cls, v: str) -> str:
+        if len(v) > 500:
+            raise ValueError("תיאור לא יכול לעלות על 500 תווים")
+        return v
+
+    @field_validator("price")
+    @classmethod
+    def price_positive(cls, v: float) -> float:
+        if v <= 0 or v > 10000:
+            raise ValueError("מחיר חייב להיות בין 0.01 ל-10000")
+        return v
+
+    @field_validator("category")
+    @classmethod
+    def category_length(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError("קטגוריה חייבת להכיל בין 1 ל-100 תווים")
+        return v
 
 class MenuItemUpdate(BaseModel):
     name: Optional[str] = None
@@ -123,6 +200,21 @@ class MenuItemUpdate(BaseModel):
     price: Optional[float] = None
     category: Optional[str] = None
     popular: Optional[bool] = None
+    image: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def name_length(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and (not v.strip() or len(v) > 100):
+            raise ValueError("שם חייב להכיל בין 1 ל-100 תווים")
+        return v
+
+    @field_validator("price")
+    @classmethod
+    def price_positive(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v <= 0 or v > 10000):
+            raise ValueError("מחיר חייב להיות בין 0.01 ל-10000")
+        return v
 
 class SiteSettings(BaseModel):
     address: Optional[str] = None
@@ -133,6 +225,19 @@ class SiteSettings(BaseModel):
 class AdminLogin(BaseModel):
     password: str
 
+# ─── Image validation ─────────────────────────────────────────────────────────
+
+def _validate_image_bytes(content: bytes, ext: str) -> bool:
+    if ext in {'.jpg', '.jpeg'} and content[:3] == b'\xff\xd8\xff':
+        return True
+    if ext == '.png' and content[:8] == b'\x89PNG\r\n\x1a\n':
+        return True
+    if ext == '.gif' and content[:4] in (b'GIF8', b'GIF9'):
+        return True
+    if ext == '.webp' and content[:4] == b'RIFF' and content[8:12] == b'WEBP':
+        return True
+    return False
+
 # ─── Public routes ────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -141,167 +246,311 @@ def root():
 
 @app.get("/settings")
 def get_settings():
-    return site_settings
+    try:
+        result = supabase.table("site_content").select("value").eq("key", "settings").execute()
+        return result.data[0]["value"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
 @app.get("/menu")
 def get_menu():
-    return MENU_ITEMS
+    try:
+        result = supabase.table("menu_items").select("*").order("id").execute()
+        return result.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
 @app.get("/menu/popular")
 def get_popular():
-    return [i for i in MENU_ITEMS if i["popular"]]
+    try:
+        result = supabase.table("menu_items").select("*").eq("popular", True).execute()
+        return result.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
 @app.get("/menu/category/{category}")
 def get_by_category(category: str):
-    items = [i for i in MENU_ITEMS if i["category"] == category]
-    if not items:
+    try:
+        result = supabase.table("menu_items").select("*").eq("category", category).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    if not result.data:
         raise HTTPException(status_code=404, detail="קטגוריה לא נמצאה")
-    return items
+    return result.data
 
 @app.get("/menu/{item_id}")
 def get_item(item_id: int):
-    item = next((i for i in MENU_ITEMS if i["id"] == item_id), None)
-    if not item:
+    try:
+        result = supabase.table("menu_items").select("*").eq("id", item_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    if not result.data:
         raise HTTPException(status_code=404, detail="פריט לא נמצא")
-    return item
+    return result.data[0]
 
 @app.post("/contact", status_code=201)
-def submit_contact(msg: ContactMessage):
-    entry = {"id": len(contact_messages) + 1, **msg.model_dump(), "timestamp": datetime.now().isoformat()}
-    contact_messages.append(entry)
+def submit_contact(msg: ContactMessage, request: Request):
+    ip = _get_client_ip(request)
+    _check_rate_limit(f"contact:{ip}", max_requests=5, window_seconds=300)
+    try:
+        supabase.table("messages").insert({
+            "name": msg.name,
+            "email": msg.email,
+            "message": msg.message,
+            "timestamp": datetime.now().isoformat(),
+        }).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
     return {"success": True, "message": "ההודעה נשלחה בהצלחה!"}
 
 @app.post("/orders", status_code=201)
-def create_order(order: Order):
-    global _next_id
+def create_order(order: Order, request: Request):
+    ip = _get_client_ip(request)
+    _check_rate_limit(f"orders:{ip}", max_requests=10, window_seconds=60)
+
+    # Fetch all needed menu items in one query
+    item_ids = [oi.item_id for oi in order.items]
+    try:
+        menu_result = supabase.table("menu_items").select("*").in_("id", item_ids).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+
+    menu_map = {item["id"]: item for item in menu_result.data}
+
     total = 0.0
     line_items = []
     for oi in order.items:
-        item = next((i for i in MENU_ITEMS if i["id"] == oi.item_id), None)
+        item = menu_map.get(oi.item_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"פריט {oi.item_id} לא נמצא")
-        sub = item["price"] * oi.quantity
+        sub = float(item["price"]) * oi.quantity
         total += sub
         line_items.append({"name": item["name"], "quantity": oi.quantity, "subtotal": sub})
-    entry = {"id": len(orders_db) + 1, "customer_name": order.customer_name,
-             "items": line_items, "total": total, "notes": order.notes,
-             "status": "התקבלה", "timestamp": datetime.now().isoformat()}
-    orders_db.append(entry)
-    return {"success": True, "order_id": entry["id"], "total": total, "message": "ההזמנה התקבלה!"}
+
+    try:
+        result = supabase.table("orders").insert({
+            "customer_name": order.customer_name,
+            "items": line_items,
+            "total": total,
+            "notes": order.notes,
+            "status": "התקבלה",
+            "timestamp": datetime.now().isoformat(),
+        }).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+
+    order_id = result.data[0]["id"]
+    return {"success": True, "order_id": order_id, "total": total, "message": "ההזמנה התקבלה!"}
 
 # ─── Admin: auth ──────────────────────────────────────────────────────────────
 
 @app.post("/admin/login")
-def admin_login(body: AdminLogin):
+def admin_login(body: AdminLogin, request: Request):
+    ip = _get_client_ip(request)
+    _check_rate_limit(f"login:{ip}", max_requests=5, window_seconds=300)
     if body.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="סיסמה שגויה")
-    return {"success": True, "token": ADMIN_PASSWORD}
+    token = _create_session()
+    return {"success": True, "token": token}
+
+# ─── Admin: image upload ──────────────────────────────────────────────────────
+
+@app.post("/admin/upload-image", dependencies=[Depends(require_admin)])
+async def upload_image(file: UploadFile = File(...)):
+    ext = Path(file.filename).suffix.lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        raise HTTPException(status_code=400, detail="סוג קובץ לא נתמך")
+    contents = await file.read()
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="הקובץ גדול מדי (מקסימום 5MB)")
+    if not _validate_image_bytes(contents, ext):
+        raise HTTPException(status_code=400, detail="תוכן הקובץ אינו תואם לסוג הקובץ שצוין")
+
+    filename = f"{uuid.uuid4().hex}{ext}"
+    mime_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    mime_type = mime_map.get(ext, "image/jpeg")
+
+    try:
+        supabase.storage.from_("images").upload(
+            filename,
+            contents,
+            file_options={"content-type": mime_type},
+        )
+        public_url = supabase.storage.from_("images").get_public_url(filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאה בהעלאת הקובץ")
+
+    return {"url": public_url}
 
 # ─── Admin: menu ──────────────────────────────────────────────────────────────
 
 @app.post("/admin/menu", status_code=201, dependencies=[Depends(require_admin)])
 def admin_add_item(item: MenuItemCreate):
-    global _next_id
-    new_item = {"id": _next_id, **item.model_dump()}
-    _next_id += 1
-    MENU_ITEMS.append(new_item)
-    return new_item
+    try:
+        result = supabase.table("menu_items").insert({
+            "name": item.name,
+            "description": item.description,
+            "price": item.price,
+            "category": item.category,
+            "popular": item.popular,
+            "image": item.image,
+        }).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    return result.data[0]
 
 @app.put("/admin/menu/{item_id}", dependencies=[Depends(require_admin)])
 def admin_update_item(item_id: int, updates: MenuItemUpdate):
-    item = next((i for i in MENU_ITEMS if i["id"] == item_id), None)
-    if not item:
+    try:
+        existing = supabase.table("menu_items").select("*").eq("id", item_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    if not existing.data:
         raise HTTPException(status_code=404, detail="פריט לא נמצא")
-    for field, value in updates.model_dump(exclude_none=True).items():
-        item[field] = value
-    return item
+
+    update_data = updates.model_dump(exclude_none=True)
+    try:
+        result = supabase.table("menu_items").update(update_data).eq("id", item_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    return result.data[0]
 
 @app.delete("/admin/menu/{item_id}", dependencies=[Depends(require_admin)])
 def admin_delete_item(item_id: int):
-    item = next((i for i in MENU_ITEMS if i["id"] == item_id), None)
-    if not item:
+    try:
+        existing = supabase.table("menu_items").select("id").eq("id", item_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    if not existing.data:
         raise HTTPException(status_code=404, detail="פריט לא נמצא")
-    MENU_ITEMS.remove(item)
+
+    try:
+        supabase.table("menu_items").delete().eq("id", item_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
     return {"success": True, "message": "הפריט נמחק"}
 
 # ─── Admin: settings ──────────────────────────────────────────────────────────
 
 @app.put("/admin/settings", dependencies=[Depends(require_admin)])
 def admin_update_settings(updates: SiteSettings):
-    for field, value in updates.model_dump(exclude_none=True).items():
-        site_settings[field] = value
-    return site_settings
+    try:
+        current = supabase.table("site_content").select("value").eq("key", "settings").execute()
+        merged = {**current.data[0]["value"], **updates.model_dump(exclude_none=True)}
+        supabase.table("site_content").update({"value": merged}).eq("key", "settings").execute()
+        result = supabase.table("site_content").select("value").eq("key", "settings").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    return result.data[0]["value"]
 
 # ─── About content ────────────────────────────────────────────────────────────
 
 @app.get("/about-content")
 def get_about_content():
-    return about_content
+    try:
+        result = supabase.table("site_content").select("value").eq("key", "about_content").execute()
+        return result.data[0]["value"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
 @app.put("/admin/about-content", dependencies=[Depends(require_admin)])
 def admin_update_about(updates: dict):
-    for field, value in updates.items():
-        if field in about_content:
-            about_content[field] = value
-    return about_content
+    try:
+        current = supabase.table("site_content").select("value").eq("key", "about_content").execute()
+        current_value = current.data[0]["value"]
+        merged = {**current_value, **{k: v for k, v in updates.items() if k in current_value}}
+        supabase.table("site_content").update({"value": merged}).eq("key", "about_content").execute()
+        result = supabase.table("site_content").select("value").eq("key", "about_content").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    return result.data[0]["value"]
 
-# ─── Home content ──────────────────────────────────────────────────────────────
+# ─── Home content ─────────────────────────────────────────────────────────────
 
 @app.get("/home-content")
 def get_home_content():
-    return home_content
+    try:
+        result = supabase.table("site_content").select("value").eq("key", "home_content").execute()
+        return result.data[0]["value"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
 @app.put("/admin/home-content", dependencies=[Depends(require_admin)])
 def admin_update_home(updates: dict):
-    for field, value in updates.items():
-        if field in home_content:
-            home_content[field] = value
-    return home_content
+    try:
+        current = supabase.table("site_content").select("value").eq("key", "home_content").execute()
+        current_value = current.data[0]["value"]
+        merged = {**current_value, **{k: v for k, v in updates.items() if k in current_value}}
+        supabase.table("site_content").update({"value": merged}).eq("key", "home_content").execute()
+        result = supabase.table("site_content").select("value").eq("key", "home_content").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    return result.data[0]["value"]
 
-# ─── Menu page content ─────────────────────────────────────────────────────────
-
-menu_page_content = {
-    "title": "המוצרים שלנו",
-    "subtitle": "כל מה שצריך לרגע מושלם — קפה, מאפה ואוכל טוב",
-}
+# ─── Menu page content ────────────────────────────────────────────────────────
 
 @app.get("/menu-content")
 def get_menu_content():
-    return menu_page_content
+    try:
+        result = supabase.table("site_content").select("value").eq("key", "menu_page_content").execute()
+        return result.data[0]["value"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
 @app.put("/admin/menu-content", dependencies=[Depends(require_admin)])
 def admin_update_menu_content(updates: dict):
-    for field, value in updates.items():
-        if field in menu_page_content:
-            menu_page_content[field] = value
-    return menu_page_content
+    try:
+        current = supabase.table("site_content").select("value").eq("key", "menu_page_content").execute()
+        current_value = current.data[0]["value"]
+        merged = {**current_value, **{k: v for k, v in updates.items() if k in current_value}}
+        supabase.table("site_content").update({"value": merged}).eq("key", "menu_page_content").execute()
+        result = supabase.table("site_content").select("value").eq("key", "menu_page_content").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    return result.data[0]["value"]
 
-# ─── Contact page content ──────────────────────────────────────────────────────
-
-contact_content = {
-    "title": "צרו קשר",
-    "subtitle": "נשמח לשמוע מכם",
-    "info_title": "מצאו אותנו",
-    "form_title": "שלחו לנו הודעה",
-}
+# ─── Contact page content ─────────────────────────────────────────────────────
 
 @app.get("/contact-content")
 def get_contact_content():
-    return contact_content
+    try:
+        result = supabase.table("site_content").select("value").eq("key", "contact_content").execute()
+        return result.data[0]["value"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
 @app.put("/admin/contact-content", dependencies=[Depends(require_admin)])
 def admin_update_contact_content(updates: dict):
-    for field, value in updates.items():
-        if field in contact_content:
-            contact_content[field] = value
-    return contact_content
+    try:
+        current = supabase.table("site_content").select("value").eq("key", "contact_content").execute()
+        current_value = current.data[0]["value"]
+        merged = {**current_value, **{k: v for k, v in updates.items() if k in current_value}}
+        supabase.table("site_content").update({"value": merged}).eq("key", "contact_content").execute()
+        result = supabase.table("site_content").select("value").eq("key", "contact_content").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+    return result.data[0]["value"]
 
-# ─── Admin: view messages & orders ────────────────────────────────────────────
+# ─── Admin: view messages & orders ───────────────────────────────────────────
 
 @app.get("/admin/messages", dependencies=[Depends(require_admin)])
 def admin_get_messages():
-    return contact_messages
+    try:
+        result = supabase.table("messages").select("*").order("timestamp", desc=True).execute()
+        return result.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
 @app.get("/admin/orders", dependencies=[Depends(require_admin)])
 def admin_get_orders():
-    return orders_db
+    try:
+        result = supabase.table("orders").select("*").order("timestamp", desc=True).execute()
+        return result.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
