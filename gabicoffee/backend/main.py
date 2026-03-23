@@ -60,7 +60,7 @@ def _get_client_ip(request: Request) -> str:
 UPLOADS_DIR = Path(__file__).parent.parent / "frontend" / "public" / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
 
 # ─── Supabase ─────────────────────────────────────────────────────────────────
 
