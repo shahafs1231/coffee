@@ -5,17 +5,30 @@ import { useCart } from '@/context/CartContext'
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
 type Step = 'cart' | 'checkout' | 'success'
+type DeliveryType = 'pickup' | 'delivery'
 
 export default function CartDrawer() {
   const { items, isOpen, closeCart, removeItem, updateQty, clearCart, totalItems, totalPrice } = useCart()
   const [step, setStep] = useState<Step>('cart')
   const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
   const [notes, setNotes] = useState('')
+  const [address, setAddress] = useState('')
+  const [deliveryType, setDeliveryType] = useState<DeliveryType>('pickup')
   const [orderId, setOrderId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const reset = () => { setStep('cart'); setName(''); setNotes(''); setOrderId(null); setError('') }
+  const reset = () => {
+    setStep('cart')
+    setName('')
+    setPhone('')
+    setNotes('')
+    setAddress('')
+    setDeliveryType('pickup')
+    setOrderId(null)
+    setError('')
+  }
 
   const handleOrder = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -26,6 +39,9 @@ export default function CartDrawer() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customer_name: name,
+          phone,
+          address: deliveryType === 'delivery' ? address : undefined,
+          delivery_type: deliveryType,
           items: items.map(i => ({ item_id: i.id, quantity: i.quantity })),
           notes: notes || null,
         }),
@@ -175,6 +191,57 @@ export default function CartDrawer() {
                     className="input-admin" />
                 </div>
                 <div>
+                  <label className="label-admin">מספר טלפון *</label>
+                  <input required value={phone} onChange={e => setPhone(e.target.value)}
+                    placeholder="050-0000000"
+                    className="input-admin"
+                    dir="ltr" />
+                </div>
+
+                {/* Delivery type selector */}
+                <div>
+                  <label className="label-admin">אופן קבלת ההזמנה</label>
+                  <div className="flex gap-3 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryType('pickup')}
+                      className={`flex-1 py-2.5 rounded-xl font-semibold text-sm border-2 transition-colors ${
+                        deliveryType === 'pickup'
+                          ? 'bg-coffee-700 text-cream border-coffee-700'
+                          : 'bg-white text-coffee-700 border-coffee-200 hover:border-coffee-400'
+                      }`}
+                    >
+                      🏪 איסוף עצמי
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryType('delivery')}
+                      className={`flex-1 py-2.5 rounded-xl font-semibold text-sm border-2 transition-colors ${
+                        deliveryType === 'delivery'
+                          ? 'bg-coffee-700 text-cream border-coffee-700'
+                          : 'bg-white text-coffee-700 border-coffee-200 hover:border-coffee-400'
+                      }`}
+                    >
+                      🚚 משלוח
+                    </button>
+                  </div>
+                </div>
+
+                {/* Address — only shown for delivery */}
+                {deliveryType === 'delivery' && (
+                  <div>
+                    <label className="label-admin">כתובת למשלוח *</label>
+                    <input
+                      required
+                      value={address}
+                      onChange={e => setAddress(e.target.value)}
+                      placeholder="רחוב, מספר, עיר"
+                      className="input-admin"
+                    />
+                  </div>
+                )}
+
+                <div>
                   <label className="label-admin">הערות (אופציונלי)</label>
                   <textarea rows={3} value={notes} onChange={e => setNotes(e.target.value)}
                     placeholder="אלרגיות, בקשות מיוחדות..."
@@ -205,7 +272,9 @@ export default function CartDrawer() {
               תודה, <span className="font-bold">{name}</span>!<br />
               מספר הזמנה: <span className="font-bold text-coffee-800">#{orderId}</span>
             </p>
-            <p className="text-coffee-400 text-sm">נכין את הזמנתך בהקדם ☕</p>
+            <p className="text-coffee-400 text-sm">
+              {deliveryType === 'delivery' ? 'נשלח את הזמנתך בהקדם 🚚' : 'נכין את הזמנתך בהקדם ☕'}
+            </p>
             <button onClick={() => { closeCart(); reset() }}
               className="btn-primary px-8 py-3 mt-2">
               סגור

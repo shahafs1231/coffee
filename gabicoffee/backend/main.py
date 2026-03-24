@@ -1,16 +1,23 @@
 from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from typing import List, Optional
 from datetime import datetime
 import os, uuid, secrets, time
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from collections import defaultdict
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
 load_dotenv()
+
+NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL", "")  # admin notification email
+GMAIL_USER = os.getenv("GMAIL_USER", "")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 
 app = FastAPI(title="Gabriel's Coffee API")
 
@@ -23,7 +30,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "x-admin-password", "x-admin-token"],
 )
 
@@ -54,6 +61,21 @@ def _get_client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+def _send_email(to: str, subject: str, html: str):
+    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+        return
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = GMAIL_USER
+        msg["To"] = to
+        msg.attach(MIMEText(html, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_USER, to, msg.as_string())
+    except Exception:
+        pass  # Don't fail the order if email fails
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -131,8 +153,11 @@ class OrderItem(BaseModel):
 
 class Order(BaseModel):
     customer_name: str
+    phone: str
     items: List[OrderItem]
     notes: Optional[str] = None
+    address: Optional[str] = None
+    delivery_type: str = "pickup"
 
     @field_validator("customer_name")
     @classmethod
@@ -140,6 +165,28 @@ class Order(BaseModel):
         v = v.strip()
         if not v or len(v) > 100:
             raise ValueError("שם לקוח חייב להכיל בין 1 ל-100 תווים")
+        return v
+
+    @field_validator("phone")
+    @classmethod
+    def phone_valid(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) < 7 or len(v) > 15:
+            raise ValueError("מספר טלפון חייב להכיל בין 7 ל-15 תווים")
+        return v
+
+    @field_validator("address")
+    @classmethod
+    def address_length(cls, v: Optional[str]) -> Optional[str]:
+        if v and len(v) > 200:
+            raise ValueError("כתובת לא יכולה לעלות על 200 תווים")
+        return v
+
+    @field_validator("delivery_type")
+    @classmethod
+    def delivery_type_valid(cls, v: str) -> str:
+        if v not in ("pickup", "delivery"):
+            raise ValueError("סוג משלוח חייב להיות pickup או delivery")
         return v
 
     @field_validator("items")
@@ -155,6 +202,12 @@ class Order(BaseModel):
         if v and len(v) > 500:
             raise ValueError("הערות לא יכולות לעלות על 500 תווים")
         return v
+
+    @model_validator(mode="after")
+    def delivery_requires_address(self) -> "Order":
+        if self.delivery_type == "delivery" and not self.address:
+            raise ValueError("כתובת חובה עבור משלוח")
+        return self
 
 class MenuItemCreate(BaseModel):
     name: str
@@ -330,16 +383,53 @@ def create_order(order: Order, request: Request):
     try:
         result = supabase.table("orders").insert({
             "customer_name": order.customer_name,
+            "phone": order.phone,
+            "address": order.address or "",
+            "delivery_type": order.delivery_type,
             "items": line_items,
             "total": total,
             "notes": order.notes,
-            "status": "התקבלה",
+            "status": "חדשה",
             "timestamp": datetime.now().isoformat(),
         }).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
 
     order_id = result.data[0]["id"]
+
+    # Send admin notification email
+    if NOTIFY_EMAIL:
+        delivery_label = "משלוח" if order.delivery_type == "delivery" else "איסוף עצמי"
+        address_row = f"<tr><td style='padding:4px 8px;color:#6b4c2a;font-weight:bold;'>כתובת:</td><td style='padding:4px 8px;'>{order.address}</td></tr>" if order.delivery_type == "delivery" else ""
+        items_html = "".join(
+            f"<li style='padding:2px 0;'>{li['name']} × {li['quantity']} — ₪{li['subtotal']:.2f}</li>"
+            for li in line_items
+        )
+        html_body = f"""
+        <div dir="rtl" style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fffaf5;padding:24px;border-radius:12px;">
+          <h2 style="color:#3b1f0a;border-bottom:2px solid #c9a87c;padding-bottom:8px;">
+            ☕ הזמנה חדשה #{order_id} — גבריאלס' קפה
+          </h2>
+          <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+            <tr><td style="padding:4px 8px;color:#6b4c2a;font-weight:bold;">שם לקוח:</td><td style="padding:4px 8px;">{order.customer_name}</td></tr>
+            <tr><td style="padding:4px 8px;color:#6b4c2a;font-weight:bold;">טלפון:</td><td style="padding:4px 8px;">{order.phone}</td></tr>
+            <tr><td style="padding:4px 8px;color:#6b4c2a;font-weight:bold;">סוג משלוח:</td><td style="padding:4px 8px;">{delivery_label}</td></tr>
+            {address_row}
+          </table>
+          <h3 style="color:#3b1f0a;">פריטים:</h3>
+          <ul style="margin:8px 0;padding-right:20px;color:#4a3020;">{items_html}</ul>
+          <p style="font-size:1.1em;font-weight:bold;color:#3b1f0a;border-top:1px solid #c9a87c;padding-top:8px;margin-top:16px;">
+            סה"כ: ₪{total:.2f}
+          </p>
+          {f'<p style="color:#6b4c2a;"><em>הערות: {order.notes}</em></p>' if order.notes else ""}
+        </div>
+        """
+        _send_email(
+            to=NOTIFY_EMAIL,
+            subject=f"הזמנה חדשה #{order_id} - {order.customer_name}",
+            html=html_body,
+        )
+
     return {"success": True, "order_id": order_id, "total": total, "message": "ההזמנה התקבלה!"}
 
 # ─── Admin: auth ──────────────────────────────────────────────────────────────
@@ -553,4 +643,28 @@ def admin_get_orders():
         result = supabase.table("orders").select("*").order("timestamp", desc=True).execute()
         return result.data
     except Exception as e:
+        raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")
+
+class OrderStatusUpdate(BaseModel):
+    status: str
+
+    @field_validator("status")
+    @classmethod
+    def valid_status(cls, v: str) -> str:
+        allowed = ["חדשה", "בטיפול", "מוכנה לאיסוף", "בדרך", "הושלמה", "בוטלה"]
+        if v not in allowed:
+            raise ValueError("סטטוס לא חוקי")
+        return v
+
+@app.patch("/admin/orders/{order_id}", dependencies=[Depends(require_admin)])
+def admin_update_order_status(order_id: int, update: OrderStatusUpdate):
+    try:
+        existing = supabase.table("orders").select("id").eq("id", order_id).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="הזמנה לא נמצאה")
+        result = supabase.table("orders").update({"status": update.status}).eq("id", order_id).execute()
+        return result.data[0]
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=500, detail="שגיאת מסד נתונים")

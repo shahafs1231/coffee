@@ -62,6 +62,9 @@ interface ContactMessage {
 interface Order {
   id: number
   customer_name: string
+  phone: string
+  address: string
+  delivery_type: string
   items: { name: string; quantity: number; subtotal: number }[]
   total: number
   notes: string | null
@@ -168,6 +171,7 @@ export default function AdminPage() {
   // Messages & orders
   const [messages, setMessages] = useState<ContactMessage[]>([])
   const [orders, setOrders] = useState<Order[]>([])
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string>('הכל')
 
   const headers = { 'Content-Type': 'application/json', 'x-admin-token': token || '' }
 
@@ -222,9 +226,20 @@ export default function AdminPage() {
   }
 
   // Fetch orders
-  const fetchOrders = async (t: string) => {
-    const res = await fetch(`${API}/admin/orders`, { headers: { 'x-admin-token': t } })
+  const fetchOrders = async (t?: string) => {
+    const tok = t ?? token ?? ''
+    const res = await fetch(`${API}/admin/orders`, { headers: { 'x-admin-token': tok } })
     if (res.ok) setOrders(await res.json())
+  }
+
+  // Update order status
+  const updateOrderStatus = async (orderId: number, status: string) => {
+    await fetch(`${API}/admin/orders/${orderId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': token || '' },
+      body: JSON.stringify({ status }),
+    })
+    fetchOrders()
   }
 
   useEffect(() => {
@@ -233,6 +248,7 @@ export default function AdminPage() {
       fetchMenuPage(); fetchContactPage()
       fetchMessages(token); fetchOrders(token)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   if (!token) return <LoginScreen onLogin={setToken} />
@@ -1041,36 +1057,108 @@ export default function AdminPage() {
         {/* ── ORDERS TAB ── */}
         {tab === 'orders' && (
           <div>
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-bold text-coffee-900">הזמנות</h2>
-              <button onClick={() => fetchOrders(token!)} className="btn-outline text-sm py-2 px-4">רענן</button>
+              <button onClick={() => fetchOrders()} className="btn-outline text-sm py-2 px-4">רענן</button>
             </div>
+
+            {/* Status filter buttons */}
+            <div className="flex flex-wrap gap-2 mb-6">
+              {['הכל', 'חדשה', 'בטיפול', 'מוכנה לאיסוף', 'בדרך', 'הושלמה', 'בוטלה'].map(s => (
+                <button
+                  key={s}
+                  onClick={() => setOrderStatusFilter(s)}
+                  className={`text-sm font-semibold px-4 py-1.5 rounded-full border-2 transition-colors ${
+                    orderStatusFilter === s
+                      ? 'bg-coffee-700 text-cream border-coffee-700'
+                      : 'bg-white text-coffee-600 border-coffee-200 hover:border-coffee-500'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
             {orders.length === 0 ? (
               <div className="card p-10 text-center text-coffee-400">עדיין לא התקבלו הזמנות</div>
-            ) : (
-              <div className="space-y-4">
-                {[...orders].reverse().map(order => (
-                  <div key={order.id} className="card p-5">
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <span className="font-bold text-coffee-900">#{order.id} — {order.customer_name}</span>
-                        <span className="mr-3 bg-coffee-100 text-coffee-700 text-xs font-medium px-2 py-0.5 rounded-full">{order.status}</span>
+            ) : (() => {
+              const filtered = orderStatusFilter === 'הכל'
+                ? orders
+                : orders.filter(o => o.status === orderStatusFilter)
+              if (filtered.length === 0) {
+                return <div className="card p-10 text-center text-coffee-400">אין הזמנות בסטטוס זה</div>
+              }
+              return (
+                <div className="space-y-4">
+                  {filtered.map(order => {
+                    const statusColors: Record<string, string> = {
+                      'חדשה':           'bg-blue-100 text-blue-800',
+                      'בטיפול':         'bg-yellow-100 text-yellow-800',
+                      'מוכנה לאיסוף':   'bg-green-100 text-green-800',
+                      'בדרך':           'bg-purple-100 text-purple-800',
+                      'הושלמה':         'bg-gray-100 text-gray-600',
+                      'בוטלה':          'bg-red-100 text-red-700',
+                    }
+                    const badgeClass = statusColors[order.status] ?? 'bg-coffee-100 text-coffee-700'
+                    const isDelivery = order.delivery_type === 'delivery'
+                    return (
+                      <div key={order.id} className="card p-5">
+                        {/* Top row */}
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold text-coffee-900 text-base">#{order.id}</span>
+                            <span className="font-semibold text-coffee-800">{order.customer_name}</span>
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${badgeClass}`}>
+                              {order.status}
+                            </span>
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                              isDelivery ? 'bg-indigo-100 text-indigo-700' : 'bg-coffee-100 text-coffee-600'
+                            }`}>
+                              {isDelivery ? '🚚 משלוח' : '🏪 איסוף'}
+                            </span>
+                          </div>
+                          <div className="text-left flex-shrink-0 mr-2">
+                            <div className="font-bold text-coffee-900">₪{order.total.toFixed(2)}</div>
+                            <div className="text-xs text-coffee-400">{new Date(order.timestamp).toLocaleString('he-IL')}</div>
+                          </div>
+                        </div>
+
+                        {/* Customer details */}
+                        <div className="text-sm text-coffee-600 mb-2 space-y-0.5">
+                          {order.phone && <p>📞 {order.phone}</p>}
+                          {isDelivery && order.address && <p>📍 {order.address}</p>}
+                        </div>
+
+                        {/* Items */}
+                        <ul className="text-sm text-coffee-600 space-y-1 mb-2">
+                          {order.items.map((item, i) => (
+                            <li key={i}>• {item.name} × {item.quantity} — ₪{item.subtotal.toFixed(2)}</li>
+                          ))}
+                        </ul>
+
+                        {order.notes && (
+                          <p className="text-sm text-coffee-500 italic mb-3">הערות: {order.notes}</p>
+                        )}
+
+                        {/* Status dropdown */}
+                        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-coffee-100">
+                          <label className="text-xs font-semibold text-coffee-500">עדכון סטטוס:</label>
+                          <select
+                            value={order.status}
+                            onChange={e => updateOrderStatus(order.id, e.target.value)}
+                            className="input-admin text-sm py-1.5 flex-1 max-w-xs"
+                          >
+                            {['חדשה', 'בטיפול', 'מוכנה לאיסוף', 'בדרך', 'הושלמה', 'בוטלה'].map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
-                      <div className="text-left">
-                        <div className="font-bold text-coffee-900">₪{order.total.toFixed(2)}</div>
-                        <div className="text-xs text-coffee-400">{new Date(order.timestamp).toLocaleString('he-IL')}</div>
-                      </div>
-                    </div>
-                    <ul className="text-sm text-coffee-600 space-y-1">
-                      {order.items.map((item, i) => (
-                        <li key={i}>• {item.name} × {item.quantity} — ₪{item.subtotal.toFixed(2)}</li>
-                      ))}
-                    </ul>
-                    {order.notes && <p className="text-sm text-coffee-500 mt-2 italic">הערות: {order.notes}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
         )}
 
