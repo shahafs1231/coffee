@@ -106,7 +106,7 @@ function ProductForm({
           <label className="label-admin">קטגוריה *</label>
           <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
             className="input-admin">
-            {['קפה', 'ליד הקפה', 'מכונות קפה וציוד נלווה'].map(c => <option key={c}>{c}</option>)}
+            {CATEGORIES.filter(c => c !== 'הכל').map(c => <option key={c}>{c}</option>)}
           </select>
         </div>
       </div>
