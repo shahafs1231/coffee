@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
-const CATEGORIES = ['פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות']
+const CATEGORIES = ['פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות', 'מוצרי ניקוי ותחזוקה']
 
 interface MenuItem {
   id: number
