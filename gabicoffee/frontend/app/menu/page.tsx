@@ -13,11 +13,12 @@ interface MenuItem {
   popular: boolean
 }
 
-const CATEGORIES_HE = ['הכל', 'פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות', 'מוצרי ניקוי ותחזוקה']
-const CATEGORIES_EN = ['All', 'Coffee Beans', 'Coffee Machines', 'Accessories', 'Gifts', 'Cleaning & Maintenance']
+const CATEGORIES_HE = ['הכל', 'פולי קפה', 'קפסולות', 'מכונות קפה', 'אביזרים', 'מתנות', 'מוצרי ניקוי ותחזוקה']
+const CATEGORIES_EN = ['All', 'Coffee Beans', 'Capsules', 'Coffee Machines', 'Accessories', 'Gifts', 'Cleaning & Maintenance']
 const CATEGORY_MAP: Record<string, string> = {
   'הכל': 'All',
   'פולי קפה': 'Coffee Beans',
+  'קפסולות': 'Capsules',
   'מכונות קפה': 'Coffee Machines',
   'אביזרים': 'Accessories',
   'מתנות': 'Gifts',
@@ -33,6 +34,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   'מכונות קפה': '⚙️', 'Coffee Machines': '⚙️',
   'אביזרים': '🔧', 'Accessories': '🔧',
   'מתנות': '🎁', 'Gifts': '🎁',
+  'קפסולות': '🫙', 'Capsules': '🫙',
   'מוצרי ניקוי ותחזוקה': '🧹', 'Cleaning & Maintenance': '🧹',
 }
 

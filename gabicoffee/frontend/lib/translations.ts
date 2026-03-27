@@ -5,6 +5,7 @@ const translations = {
     nav: {
       home: 'דף הבית',
       menu: 'מוצרים',
+      capsules: 'קפסולות',
       about: 'אודות',
       contact: 'צור קשר',
       admin: '🔐 כניסה לאדמין',
@@ -77,6 +78,7 @@ const translations = {
     nav: {
       home: 'Home',
       menu: 'Menu',
+      capsules: 'Capsules',
       about: 'About',
       contact: 'Contact',
       admin: '🔐 Admin Login',
