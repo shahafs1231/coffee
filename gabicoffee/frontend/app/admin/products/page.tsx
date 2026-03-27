@@ -3,8 +3,8 @@ import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
-const CATEGORIES = ['הכל', 'פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות']
-const CATEGORY_EMOJI: Record<string, string> = { 'פולי קפה': '☕', 'מכונות קפה': '⚙️', 'אביזרים': '🔧', 'מתנות': '🎁', 'הכל': '🛍️' }
+const CATEGORIES = ['הכל', 'פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות', 'מוצרי ניקוי ותחזוקה']
+const CATEGORY_EMOJI: Record<string, string> = { 'פולי קפה': '☕', 'מכונות קפה': '⚙️', 'אביזרים': '🔧', 'מתנות': '🎁', 'הכל': '🛍️', 'מוצרי ניקוי ותחזוקה': '🧹' }
 
 interface MenuItem {
   id: number

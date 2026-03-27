@@ -13,14 +13,15 @@ interface MenuItem {
   popular: boolean
 }
 
-const CATEGORIES_HE = ['הכל', 'פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות']
-const CATEGORIES_EN = ['All', 'Coffee Beans', 'Coffee Machines', 'Accessories', 'Gifts']
+const CATEGORIES_HE = ['הכל', 'פולי קפה', 'מכונות קפה', 'אביזרים', 'מתנות', 'מוצרי ניקוי ותחזוקה']
+const CATEGORIES_EN = ['All', 'Coffee Beans', 'Coffee Machines', 'Accessories', 'Gifts', 'Cleaning & Maintenance']
 const CATEGORY_MAP: Record<string, string> = {
   'הכל': 'All',
   'פולי קפה': 'Coffee Beans',
   'מכונות קפה': 'Coffee Machines',
   'אביזרים': 'Accessories',
   'מתנות': 'Gifts',
+  'מוצרי ניקוי ותחזוקה': 'Cleaning & Maintenance',
 }
 const CATEGORY_MAP_REVERSE: Record<string, string> = Object.fromEntries(
   Object.entries(CATEGORY_MAP).map(([k, v]) => [v, k])
@@ -32,6 +33,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   'מכונות קפה': '⚙️', 'Coffee Machines': '⚙️',
   'אביזרים': '🔧', 'Accessories': '🔧',
   'מתנות': '🎁', 'Gifts': '🎁',
+  'מוצרי ניקוי ותחזוקה': '🧹', 'Cleaning & Maintenance': '🧹',
 }
 
 export default function MenuPage() {
